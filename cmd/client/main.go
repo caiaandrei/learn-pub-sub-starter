@@ -26,21 +26,21 @@ func main() {
 		return
 	}
 
-	_, queue, err := pubsub.DeclareAndBind(
+	state := gamelogic.NewGameState(userName)
+
+	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilDirect,
-		routing.PauseKey+"."+userName,
+		routing.PauseKey+"."+state.GetUsername(),
 		routing.PauseKey,
-		pubsub.SimpleQueueTransient)
+		pubsub.SimpleQueueTransient,
+		handlerPause(*state),
+	)
 
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-
-	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
-
-	state := gamelogic.NewGameState(userName)
 
 	for {
 		words := gamelogic.GetInput()
@@ -56,24 +56,30 @@ func main() {
 				continue
 			}
 		case "move":
-			move, err := state.CommandMove(words)
+			_, err = state.CommandMove(words)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
-			fmt.Printf("Moved to location %s\n", move.ToLocation)
 		case "status":
 			state.CommandStatus()
 		case "help":
 			gamelogic.PrintServerHelp()
 		case "spam":
 			fmt.Println("Spamming not allowed yet!")
-		case "quite":
+		case "quit":
 			gamelogic.PrintQuit()
 			return
 		default:
 			fmt.Println("Unknown command")
 			continue
 		}
+	}
+}
+
+func handlerPause(gs gamelogic.GameState) func(routing.PlayingState) {
+	return func(ps routing.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(ps)
 	}
 }
