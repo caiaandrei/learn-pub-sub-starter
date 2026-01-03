@@ -19,7 +19,11 @@ func main() {
 		return
 	}
 	defer conn.Close()
-
+	ch, err := conn.Channel()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	userName, err := gamelogic.ClientWelcome()
 	if err != nil {
 		fmt.Println(err)
@@ -28,6 +32,7 @@ func main() {
 
 	state := gamelogic.NewGameState(userName)
 
+	// subscribe to pause/resume
 	err = pubsub.SubscribeJSON(
 		conn,
 		routing.ExchangePerilDirect,
@@ -41,6 +46,16 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+
+	// subscribe to moves from other players
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.ArmyMovesPrefix+"."+state.GetUsername(),
+		routing.ArmyMovesPrefix+".*",
+		pubsub.SimpleQueueTransient,
+		handlerMove(*state),
+	)
 
 	for {
 		words := gamelogic.GetInput()
@@ -56,11 +71,17 @@ func main() {
 				continue
 			}
 		case "move":
-			_, err = state.CommandMove(words)
+			outcome, err := state.CommandMove(words)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
+			pubsub.PublishJson(
+				ch,
+				routing.ExchangePerilTopic,
+				routing.ArmyMovesPrefix+"."+state.GetUsername(),
+				outcome,
+			)
 		case "status":
 			state.CommandStatus()
 		case "help":
@@ -81,5 +102,13 @@ func handlerPause(gs gamelogic.GameState) func(routing.PlayingState) {
 	return func(ps routing.PlayingState) {
 		defer fmt.Print("> ")
 		gs.HandlePause(ps)
+	}
+}
+
+func handlerMove(gs gamelogic.GameState) func(move gamelogic.ArmyMove) {
+	return func(move gamelogic.ArmyMove) {
+		defer fmt.Print("> ")
+		outcome := gs.HandleMove(move)
+		fmt.Println(outcome)
 	}
 }
