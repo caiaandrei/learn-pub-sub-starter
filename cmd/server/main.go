@@ -27,6 +27,19 @@ func main() {
 		return
 	}
 
+	_, queue, err := pubsub.DeclareAndBind(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.SimpleQueueDurable)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println("Queue " + queue.Name + " created!")
+
 	gamelogic.PrintServerHelp()
 
 	for {
@@ -61,7 +74,7 @@ func main() {
 			if err != nil {
 				fmt.Println(err)
 			}
-		case "quite":
+		case "quit":
 			fmt.Println("Peril server is shutting down")
 			return
 		default:
