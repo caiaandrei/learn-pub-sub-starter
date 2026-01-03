@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -22,7 +20,7 @@ func main() {
 	}
 	defer conn.Close()
 
-	user, err := gamelogic.ClientWelcome()
+	userName, err := gamelogic.ClientWelcome()
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -31,7 +29,7 @@ func main() {
 	_, queue, err := pubsub.DeclareAndBind(
 		conn,
 		routing.ExchangePerilDirect,
-		routing.PauseKey+"."+user,
+		routing.PauseKey+"."+userName,
 		routing.PauseKey,
 		pubsub.SimpleQueueTransient)
 
@@ -42,9 +40,40 @@ func main() {
 
 	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
 
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
-	fmt.Println("Peril client is shutting down")
-	os.Exit(0)
+	state := gamelogic.NewGameState(userName)
+
+	for {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
+			continue
+		}
+
+		switch words[0] {
+		case "spawn":
+			err = state.CommandSpawn(words)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+		case "move":
+			move, err := state.CommandMove(words)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			fmt.Printf("Moved to location %s\n", move.ToLocation)
+		case "status":
+			state.CommandStatus()
+		case "help":
+			gamelogic.PrintServerHelp()
+		case "spam":
+			fmt.Println("Spamming not allowed yet!")
+		case "quite":
+			gamelogic.PrintQuit()
+			return
+		default:
+			fmt.Println("Unknown command")
+			continue
+		}
+	}
 }
