@@ -15,6 +15,14 @@ const (
 	SimpleQueueTransient
 )
 
+type AckType int
+
+const (
+	Ack AckType = iota
+	NackRequeue
+	NackDiscard
+)
+
 func DeclareAndBind(
 	conn *amqp.Connection,
 	exchange, queueName, key string,
@@ -69,7 +77,7 @@ func SubscribeJSON[T any](
 	queueName,
 	key string,
 	queueType SimpleQueueType,
-	handler func(T),
+	handler func(T) AckType,
 ) error {
 	//make sure queue exists and it's bound to exchange
 	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
@@ -93,8 +101,21 @@ func SubscribeJSON[T any](
 				log.Println(err)
 				continue
 			}
-			handler(arg)
-			msg.Ack(false)
+
+			ackType := handler(arg)
+			switch ackType {
+			case Ack:
+				msg.Ack(false)
+				log.Println("Message acknowledged:", msg.MessageId)
+			case NackRequeue:
+				msg.Nack(false, true)
+				log.Println("Message reque, negative acknowledged:", msg.MessageId)
+			case NackDiscard:
+				msg.Nack(false, false)
+				log.Println("Message discarded, negative acknowledged:", msg.MessageId)
+			default:
+				log.Println("Unknown ack type", msg.MessageId)
+			}
 		}
 	}()
 	return nil
