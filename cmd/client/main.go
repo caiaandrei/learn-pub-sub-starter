@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -34,13 +35,14 @@ func main() {
 	state := gamelogic.NewGameState(userName)
 
 	// subscribe to pause/resume
-	err = pubsub.SubscribeJSON(
+	err = pubsub.Subscribe(
 		conn,
 		routing.ExchangePerilDirect,
 		routing.PauseKey+"."+state.GetUsername(),
 		routing.PauseKey,
 		pubsub.SimpleQueueTransient,
 		handlerPause(*state),
+		pubsub.UnmarshallJSON,
 	)
 
 	if err != nil {
@@ -49,13 +51,14 @@ func main() {
 	}
 
 	// subscribe to moves from other players
-	err = pubsub.SubscribeJSON(
+	err = pubsub.Subscribe(
 		conn,
 		routing.ExchangePerilTopic,
 		routing.ArmyMovesPrefix+"."+state.GetUsername(),
 		routing.ArmyMovesPrefix+".*",
 		pubsub.SimpleQueueTransient,
 		handlerMove(state, ch),
+		pubsub.UnmarshallJSON,
 	)
 	if err != nil {
 		fmt.Println(err)
@@ -63,13 +66,14 @@ func main() {
 	}
 
 	//subscrive to war messages from other players
-	err = pubsub.SubscribeJSON(
+	err = pubsub.Subscribe(
 		conn,
 		routing.ExchangePerilTopic,
 		routing.WarRecognitionsPrefix,
 		routing.WarRecognitionsPrefix+".*",
 		pubsub.SimpleQueueDurable,
-		handlerWarMsgs(state),
+		handlerWarMsgs(state, ch),
+		pubsub.UnmarshallJSON,
 	)
 	if err != nil {
 		fmt.Println(err)
@@ -155,22 +159,56 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(move gamelogic.
 	}
 }
 
-func handlerWarMsgs(gs *gamelogic.GameState) func(rec gamelogic.RecognitionOfWar) pubsub.AckType {
+func handlerWarMsgs(gs *gamelogic.GameState, ch *amqp.Channel) func(rec gamelogic.RecognitionOfWar) pubsub.AckType {
 	return func(rec gamelogic.RecognitionOfWar) pubsub.AckType {
 		defer fmt.Print("> ")
-		outcome, _, _ := gs.HandleWar(rec)
+		outcome, winner, loser := gs.HandleWar(rec)
+
 		switch outcome {
 		case gamelogic.WarOutcomeNotInvolved:
 			return pubsub.NackRequeue
 		case gamelogic.WarOutcomeNoUnits:
 			return pubsub.NackDiscard
 		case gamelogic.WarOutcomeOpponentWon:
+			msg := fmt.Sprintf("%s won a war against %s", winner, loser)
+			err := publishGameLog(gs, ch, msg, rec.Attacker.Username)
+			if err != nil {
+				log.Println(err)
+				return pubsub.NackRequeue
+			}
+			return pubsub.Ack
 		case gamelogic.WarOutcomeYouWon:
+			msg := fmt.Sprintf("%s won a war against %s", winner, loser)
+			err := publishGameLog(gs, ch, msg, rec.Attacker.Username)
+			if err != nil {
+				log.Println(err)
+				return pubsub.NackRequeue
+			}
+			return pubsub.Ack
 		case gamelogic.WarOutcomeDraw:
+			msg := fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser)
+			err := publishGameLog(gs, ch, msg, rec.Attacker.Username)
+			if err != nil {
+				log.Println(err)
+				return pubsub.NackRequeue
+			}
 			return pubsub.Ack
 		}
 
-		log.Println("unknown war outcome")
+		log.Println("unknown war outcome", outcome)
 		return pubsub.NackDiscard
 	}
+}
+
+func publishGameLog(gs *gamelogic.GameState, ch *amqp.Channel, message string, user string) error {
+	return pubsub.PublishGob(
+		ch,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug+"."+user,
+		routing.GameLog{
+			CurrentTime: time.Now().UTC(),
+			Message:     message,
+			Username:    gs.GetUsername(),
+		},
+	)
 }

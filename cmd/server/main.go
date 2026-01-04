@@ -27,18 +27,19 @@ func main() {
 		return
 	}
 
-	_, queue, err := pubsub.DeclareAndBind(
+	err = pubsub.Subscribe(
 		conn,
 		routing.ExchangePerilTopic,
 		routing.GameLogSlug,
 		routing.GameLogSlug+".*",
-		pubsub.SimpleQueueDurable)
+		pubsub.SimpleQueueDurable,
+		handlerLogs(),
+		pubsub.UnmarshallGob,
+	)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-
-	fmt.Println("Queue " + queue.Name + " created!")
 
 	gamelogic.PrintServerHelp()
 
@@ -80,5 +81,17 @@ func main() {
 		default:
 			fmt.Println("Unknown command")
 		}
+	}
+}
+
+func handlerLogs() func(routing.GameLog) pubsub.AckType {
+	return func(log routing.GameLog) pubsub.AckType {
+		defer fmt.Print("> ")
+		err := gamelogic.WriteLog(log)
+		if err != nil {
+			fmt.Println(err)
+			return pubsub.NackDiscard
+		}
+		return pubsub.Ack
 	}
 }
